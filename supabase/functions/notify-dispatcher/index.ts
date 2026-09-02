@@ -9,6 +9,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 import { sendMail, wrapHtml } from '../_shared/mailer.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,7 +246,7 @@ const TEMPLATES: Record<string, {
 // ─────────────────────────────────────────────────────────────────────────────
 // Handler principal
 // ─────────────────────────────────────────────────────────────────────────────
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('notify-dispatcher', async (req: Request) => {
   const cors = getCorsHeaders(req);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
@@ -383,4 +384,4 @@ Deno.serve(async (req: Request) => {
   return new Response(JSON.stringify({ ok: true, results }), {
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
-});
+}));

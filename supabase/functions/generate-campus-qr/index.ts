@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as jose from 'https://esm.sh/jose@5';
 import QRCode from 'npm:qrcode';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 import { deriveShortCode } from '../_shared/qr_utils.ts';
 
 function normalizeRole(raw: string | null | undefined): string {
@@ -12,7 +13,7 @@ function normalizeRole(raw: string | null | undefined): string {
   return role;
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('generate-campus-qr', async (req: Request) => {
   const cors = getCorsHeaders(req);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
@@ -120,4 +121,4 @@ Deno.serve(async (req: Request) => {
     JSON.stringify({ token, short_code: shortCode, qr_data_url: qrDataUrl, static: true }),
     { headers: { ...cors, 'Content-Type': 'application/json' } },
   );
-});
+}));

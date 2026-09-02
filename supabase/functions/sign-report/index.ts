@@ -15,6 +15,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 import {
   SYSTEM_REPORT_SIGNER_ID,
   SYSTEM_REPORT_SIGNER_NAME,
@@ -24,7 +25,7 @@ import {
   certFingerprint,
 } from '../_shared/reportSeal.ts';
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('sign-report', async (req: Request) => {
   const cors = getCorsHeaders(req);
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), {
@@ -155,4 +156,4 @@ Deno.serve(async (req: Request) => {
       certificate_pem: x509.certificate_pem,
     } : null,
   });
-});
+}));

@@ -3,9 +3,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 import { sendMail, wrapHtml } from '../_shared/mailer.ts';
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('send-credentials', async (req: Request) => {
   const cors = getCorsHeaders(req);
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), {
@@ -71,4 +72,4 @@ Deno.serve(async (req: Request) => {
     // (antes el runtime devolvía un 500 sin CORS = "CORS Missing Allow Origin").
     return json({ error: 'Error interno en send-credentials', detail: e instanceof Error ? e.message : String(e) }, 500);
   }
-});
+}));

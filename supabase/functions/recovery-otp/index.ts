@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 import { sendMail, wrapHtml, type MailResult } from '../_shared/mailer.ts';
 
 const OTP_TTL_MINUTES = 10;
@@ -63,7 +64,7 @@ async function sendOtpEmail(to: string | string[], code: string): Promise<MailRe
   return await sendMail({ to, subject: 'Código de recuperación - UNIVO Check-Health', html });
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('recovery-otp', async (req: Request) => {
   const cors = getCorsHeaders(req);
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), {
@@ -217,4 +218,4 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     return json({ error: 'Error interno en recovery-otp', detail: e instanceof Error ? e.message : String(e) }, 500);
   }
-});
+}));

@@ -4,6 +4,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as jose from 'https://esm.sh/jose@5';
 import { getCorsHeaders } from '../_shared/cors.ts';
+import { withSentry } from '../_shared/sentry.ts';
 
 const ACCURACY_MAX_METERS = 100;
 
@@ -38,7 +39,7 @@ type ScheduleSlot = {
   check_in_to: string | null;
 };
 
-Deno.serve(async (req: Request) => {
+Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
   const cors = getCorsHeaders(req);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
@@ -211,7 +212,7 @@ Deno.serve(async (req: Request) => {
     message: 'Entrada registrada con hora oficial del servidor.',
     attendanceId: (attendance as Record<string, unknown>).id,
   });
-});
+}));
 
 async function resolveAssignment(params: {
   admin: ReturnType<typeof createClient>;
