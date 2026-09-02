@@ -1,6 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
+
+// El CI fija Node 20, que no trae WebSocket nativo (llegó recién en Node 22) — sin
+// esto, createClient() explota al armar su cliente de Realtime aunque este test
+// nunca lo use (falla en el constructor, no al usarlo). Local con Node 24 no hacía
+// falta, por eso no se detectó hasta que el CI lo corrió por primera vez.
+const supabaseOptions = { realtime: { transport: WebSocket as unknown as typeof globalThis.WebSocket } };
 
 // Test de integración en vivo (no mockeado): confirma contra un Supabase real que
 // un alumno autenticado NO puede escalar privilegios ni leer/escribir lo que no le
@@ -54,7 +61,7 @@ describe.skipIf(!RUN)('Arnés de RLS de seguridad (HU-Q01 / HU-S01 / HU-S02)', (
     if (profileErr) {
       throw new Error(`No se pudo crear el perfil de prueba: ${profileErr.message}`);
     }
-    const client = createClient(SUPABASE_URL, ANON_KEY);
+    const client = createClient(SUPABASE_URL, ANON_KEY, supabaseOptions);
     const { error: signInErr } = await client.auth.signInWithPassword({ email: studentEmail, password });
     if (signInErr) {
       throw new Error(`No se pudo iniciar sesión como ${studentEmail}: ${signInErr.message}`);
@@ -63,7 +70,7 @@ describe.skipIf(!RUN)('Arnés de RLS de seguridad (HU-Q01 / HU-S01 / HU-S02)', (
   }
 
   beforeAll(async () => {
-    admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, supabaseOptions);
 
     const { data: campuses } = await admin.from('campuses').select('id').limit(1);
     campusId = campuses?.[0]?.id ?? '00000000-0000-4000-a000-000000000099';

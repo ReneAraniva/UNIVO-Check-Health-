@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Dependencias de npm/pnpm. "security-only" hubiera sido más silencioso, pero con
+  # equipo de 2 y CI que ya corre pnpm audit (no bloqueante, C1-05), preferimos ver
+  # también las actualizaciones normales en vez de enterarnos tarde otra vez.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # Mantener actualizadas las actions usadas en .github/workflows/ci.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"

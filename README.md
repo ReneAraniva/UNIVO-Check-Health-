@@ -5,7 +5,8 @@
 **Sistema de control de asistencia para prácticas clínicas**  
 Universidad de Oriente (UNIVO) — El Salvador
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-univo--check--health.netlify.app-brightgreen?style=for-the-badge&logo=netlify)](https://univo-check-health.netlify.app/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-univocheckhealth.vercel.app-brightgreen?style=for-the-badge&logo=vercel)](https://univocheckhealth.vercel.app/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Carlos-Gnd/UNIVO-Check-Health/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/Carlos-Gnd/UNIVO-Check-Health/actions/workflows/ci.yml)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?style=for-the-badge&logo=supabase)](https://supabase.com/)
@@ -27,14 +28,15 @@ UNIVO Check-Health digitaliza el ciclo completo del registro de asistencia en pr
 | `DOCENTE`    | Docente supervisor; revisa asistencia de sus estudiantes asignados |
 | `ENCARGADO`  | Coordinador de sede; supervisa asistencia en tiempo real           |
 | `ADMIN`      | Decano; acceso completo a KPIs, reportes y configuración           |
+| `REPRESENTANTE_SEDE` | Representante del hospital; ve alumnos activos en su sede, confirma presencia por falla técnica y reporta incidencias |
 
 ---
 
 ## Página en vivo
 
-> Accede a la aplicación desplegada en Netlify:
+> Accede a la aplicación desplegada en Vercel:
 
-**[https://univo-check-health.netlify.app/](https://univo-check-health.netlify.app/)**
+**[https://univocheckhealth.vercel.app/](https://univocheckhealth.vercel.app/)**
 
 ---
 
@@ -89,7 +91,7 @@ Todos los eventos —incluyendo los rechazos— quedan registrados en el **audit
 
 ## Configuración local
 
-> El backend corre en **Supabase Cloud** — no se necesita Docker ni Supabase local.
+> El desarrollo diario corre contra **Supabase Cloud** — no hace falta Docker ni Supabase local para trabajar en el frontend. Si necesitás un backend local completo (probar migraciones, `db reset`, etc.), ver [`LOCAL_DEV.md`](./LOCAL_DEV.md).
 
 ### Requisitos previos
 
@@ -114,22 +116,28 @@ npm install -g pnpm
 ## Estructura del proyecto
 
 ```
-Asistencia práctica salud app/
+Check-Health/
 ├── src/
 │   ├── app/              # React Router (rutas + guards por rol)
 │   ├── modules/          # Módulos por dominio de negocio
 │   │   ├── admin/        # Gestión de usuarios
 │   │   ├── attendance/   # Check-in / check-out + detección de fraude
+│   │   ├── auth/         # Login, recuperación, solicitud de acceso
 │   │   ├── dashboard/    # Dashboard principal
 │   │   ├── dean/         # Panel del Decano / Coordinador
+│   │   ├── hospital/     # Portal del representante hospitalario
+│   │   ├── legal/        # Privacidad, cookies, términos
 │   │   ├── practices/    # Prácticas y sedes
+│   │   ├── profile/      # Perfil de usuario
 │   │   ├── reports/      # Exportación CSV, PDF, XLSX
 │   │   ├── rotations/    # Calendarios de rotación
-│   │   └── students/     # Listado y progreso de estudiantes
+│   │   ├── students/     # Listado y progreso de estudiantes
+│   │   └── teacher/      # Panel del docente supervisor
 │   └── shared/
 │       ├── backend/      # Supabase clients + lógica de negocio
 │       └── components/   # Layout, RoleGuard, shadcn/ui primitives
 ├── supabase/
+│   ├── functions/        # Edge Functions (Deno)
 │   └── migrations/       # Scripts SQL aplicados en Supabase Cloud
 └── .env.local            # Variables de entorno (gitignored)
 ```
@@ -149,16 +157,25 @@ git commit -m "feat: descripción del cambio"
 # Se requiere revisión antes de fusionar
 ```
 
-**Prefijos válidos:** `feat:` `fix:` `docs:` `refactor:` `merge:`
+**Prefijos válidos:** `feat:` `fix:` `docs:` `refactor:` `test:` `chore:` `ci:` `perf:` `merge:`
+
+`main` tiene protección de rama: no se puede pushear directo ni hacer force-push, y el PR necesita el CI en verde antes de mergear.
 
 ---
 
 ## Equipo
 
+**Mantenedores actuales**
+
 | Nombre                            | Carné     | GitHub                                         |
 | --------------------------------- | --------- | ---------------------------------------------- |
 | Carlos Alberto Granados Amaya     | U20240579 | [@Carlos-Gnd](https://github.com/Carlos-Gnd)   |
 | René Francisco Pacheco Araniva    | U20240844 | [@ReneAraniva](https://github.com/ReneAraniva) |
+
+**Equipo original (Ciclo I-2026)**
+
+| Nombre                            | Carné     | GitHub                                         |
+| --------------------------------- | --------- | ---------------------------------------------- |
 | Nelson René Rodríguez Quintanilla | U20240270 | [@NelsonDev10](https://github.com/NelsonDev10) |
 | Verónica Nataly Morales Jiménez   | U20220902 | [@natalyxh](https://github.com/natalyxh)       |
 | David Alexander Urias Blanco      | U20240435 | [@Dalex1905](https://github.com/Dalex1905)     |

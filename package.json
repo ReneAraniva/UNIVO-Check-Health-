@@ -73,13 +73,15 @@
     "@types/leaflet": "^1.9.21",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "4.7.0",
     "@vitest/coverage-v8": "^4.1.7",
     "jsdom": "^29.1.1",
     "tailwindcss": "4.1.12",
     "typescript": "^6.0.3",
     "vite": "6.3.5",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "ws": "^8.21.3"
   },
   "peerDependencies": {
     "react": "18.3.1",
