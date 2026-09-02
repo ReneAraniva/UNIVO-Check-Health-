@@ -1,0 +1,58 @@
+name: DB Backup
+
+# Free tier de Supabase no incluye ningún backup automático (ni diario, ni PITR
+# — eso arranca en el plan Pro). Este workflow lo suple: un dump diario del
+# esquema+datos, versionado en un repo PRIVADO aparte (Check-Health-Backups),
+# nunca en este repo (que es público).
+
+on:
+  schedule:
+    - cron: "0 9 * * *"  # 09:00 UTC = 03:00 El Salvador, fuera de horario de uso
+  workflow_dispatch: {}   # permite disparar un backup manual desde la pestaña Actions
+
+jobs:
+  backup:
+    name: Dump y push al repo de backups
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Login y link al proyecto
+        run: |
+          supabase login --token "$SUPABASE_ACCESS_TOKEN"
+          supabase link --project-ref hhddnhofyilsdaltzpeh
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Dump (schema + datos, sin objetos internos de la plataforma)
+        run: |
+          supabase db dump --linked -f dump.sql
+          gzip -f dump.sql
+
+      - name: Clonar el repo de backups (vía deploy key)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BACKUP_REPO_SSH_KEY }}" > ~/.ssh/backup_key
+          chmod 600 ~/.ssh/backup_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/backup_key -o IdentitiesOnly=yes" \
+            git clone --depth 1 git@github.com:Carlos-Gnd/UNIVO-Check-Health-Backups.git backups-repo
+
+      - name: Commitear y pushear el dump nuevo
+        run: |
+          cp dump.sql.gz backups-repo/backups/dump.sql.gz
+          cd backups-repo
+          git config user.name "checkhealth-db-backup"
+          git config user.email "actions@users.noreply.github.com"
+          git add backups/dump.sql.gz
+          if git diff --cached --quiet; then
+            echo "Sin cambios en el dump (base de datos idéntica al último backup) — nada que commitear."
+            exit 0
+          fi
+          git commit -m "backup: $(date -u +%Y-%m-%d)"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/backup_key -o IdentitiesOnly=yes" git push
