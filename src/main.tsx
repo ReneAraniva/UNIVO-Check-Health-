@@ -1,5 +1,6 @@
 
   import { createRoot } from "react-dom/client";
+  import { Analytics } from "@vercel/analytics/react";
   import App from "./app/App.tsx";
   import { ErrorBoundary } from "./shared/components/ErrorBoundary.tsx";
   import { initSentry } from "./shared/utils/sentry.ts";
@@ -11,6 +12,10 @@
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <App />
+      {/* Sprint 3: Vercel Analytics en vez de Google Analytics — sin cookies, sin
+          datos personales, agregado y anónimo. Solo mide en el deploy real de
+          Vercel (no hace nada en local/otros hosts). */}
+      <Analytics />
     </ErrorBoundary>,
   );
 
