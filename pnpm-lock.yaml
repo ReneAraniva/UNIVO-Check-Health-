@@ -168,8 +168,8 @@ importers:
         specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
         version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
       zustand:
-        specifier: ^5.0.13
-        version: 5.0.13(@types/react@18.3.29)(react@18.3.1)
+        specifier: ^5.0.15
+        version: 5.0.15(@types/react@18.3.29)(react@18.3.1)
     devDependencies:
       '@playwright/test':
         specifier: ^1.61.0
@@ -3518,8 +3518,8 @@ packages:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
 
-  zustand@5.0.13:
-    resolution: {integrity: sha512-efI2tVaVQPqtOh114loML/Z80Y4NP3yc+Ff0fYiZJPauNeWZeIp/bRFD7I9bfmCOYBh/PHxlglQ9+wvlwnPikQ==}
+  zustand@5.0.15:
+    resolution: {integrity: sha512-MpSEjRiBkA9crSYeOUH32rJC7SVqAbm0Fqcqge/bUi2PPoLcBWKOsG+C8mevmpr8TwXHBVkChbbJiyvkE+i/3A==}
     engines: {node: '>=12.20.0'}
     peerDependencies:
       '@types/react': '>=18.0.0'
@@ -6699,7 +6699,7 @@ snapshots:
       y18n: 5.0.8
       yargs-parser: 21.1.1
 
-  zustand@5.0.13(@types/react@18.3.29)(react@18.3.1):
+  zustand@5.0.15(@types/react@18.3.29)(react@18.3.1):
     optionalDependencies:
       '@types/react': 18.3.29
       react: 18.3.1
