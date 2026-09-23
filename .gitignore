@@ -51,3 +51,6 @@ CLAUDE.md
 
 # Binario de Supabase CLI
 supabase-go
+
+# Secrets reales del contenedor self-hosted local (generados por utils/generate-keys.sh)
+supabase/docker-selfhosted/.env
