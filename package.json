@@ -42,7 +42,7 @@
     "date-fns": "4.4.0",
     "firebase": "^12.14.0",
     "html5-qrcode": "^2.3.8",
-    "input-otp": "1.4.2",
+    "input-otp": "1.5.0",
     "jose": "^6.2.10",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
