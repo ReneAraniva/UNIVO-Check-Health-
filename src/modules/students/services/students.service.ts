@@ -1,5 +1,6 @@
 import { supabase } from '@/shared/backend/supabaseClient';
 import { Student } from '../types';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 export const getStudents = async (): Promise<Student[]> => {
   const [{ data, error }, { data: groups }] = await Promise.all([
@@ -13,7 +14,8 @@ export const getStudents = async (): Promise<Student[]> => {
       .select('student_id, campus:campuses(name)'),
   ]);
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('students.service.getStudents', error); return []; }
+  if (!data) return [];
 
   // Mapa student_id -> conjunto de nombres de sede.
   const sedesByStudent = new Map<string, Set<string>>();

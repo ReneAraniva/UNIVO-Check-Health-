@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // Fase 1 — Servicio de asignaciones. Puebla teacher_groups + student_schedules
 // (creadas en la migración 20260530000006). Las escrituras van por RLS:
@@ -97,7 +98,8 @@ export async function fetchAssignments(): Promise<Assignment[]> {
     .from('teacher_groups')
     .select('id, student_id, teacher_id, coordinator_id, campus_id, subject_id, period, start_date, end_date, required_hours')
     .order('period', { ascending: false });
-  if (error || !data) return [];
+  if (error) { reportServiceError('assignments.service.fetchAssignments', error); return []; }
+  if (!data) return [];
   return data as Assignment[];
 }
 

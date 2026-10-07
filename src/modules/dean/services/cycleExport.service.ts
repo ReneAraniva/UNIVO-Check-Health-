@@ -1,4 +1,6 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { csvCell, downloadCsv, toCsv } from '@/shared/utils/csv';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // HU-37 — Exportación de los datos del ciclo (asistencias normalizadas) en
 // JSON/CSV para sistemas externos. Cruza asistencias con alumno, materia y sede.
@@ -32,7 +34,8 @@ export async function fetchCycleRecords(period: string): Promise<CycleRecord[]> 
     .select('date, check_in, check_out, worked_hours, status, review_status, student:users!attendances_student_id_fkey(full_name, student_code, career), subject:subjects(code, name), campus:campuses(name)')
     .in('student_id', studentIds)
     .order('date', { ascending: true });
-  if (error || !data) return [];
+  if (error) { reportServiceError('cycleExport.service.fetchCycleRecords', error); return []; }
+  if (!data) return [];
 
   return (data as any[]).map((r) => ({
     student_code: r.student?.student_code ?? '',
@@ -60,20 +63,17 @@ function download(content: string, mime: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-// Escapa un campo para CSV (comillas, comas, saltos de línea).
-export function csvCell(value: unknown): string {
-  const s = value == null ? '' : String(value);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+// csvCell vive en shared/utils/csv (lo usan los tres exportadores); se reexporta
+// por compatibilidad con los imports existentes.
+export { csvCell };
 
 export function exportCycleCsv(records: CycleRecord[], period: string) {
   const header = ['Carnet', 'Nombre', 'Carrera', 'Codigo materia', 'Materia', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Horas', 'Estado', 'Revision'];
   const rows = records.map((r) => [
     r.student_code, r.student_name, r.career, r.subject_code, r.subject_name, r.campus_name,
     r.date, r.check_in ?? '', r.check_out ?? '', r.worked_hours ?? '', r.status ?? '', r.review_status ?? '',
-  ].map(csvCell));
-  const csv = [header, ...rows].map((row) => row.join(',')).join('\n');
-  download(csv, 'text/csv', `ciclo_${period}_${new Date().toISOString().slice(0, 10)}.csv`);
+  ]);
+  downloadCsv(toCsv(header, rows), `ciclo_${period}_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 export function exportCycleJson(records: CycleRecord[], period: string) {

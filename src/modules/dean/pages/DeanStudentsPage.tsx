@@ -17,6 +17,7 @@ import {
 } from '@/shared/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { fetchCycleRecords, exportCycleCsv, exportCycleJson } from '@/modules/dean/services/cycleExport.service';
+import { downloadCsv, toCsv } from '@/shared/utils/csv';
 
 const PAGE_SIZE = 10;
 
@@ -255,14 +256,7 @@ function exportCSV(students: DeanStudent[]) {
     s.carnet, s.fullName, s.career, s.sedeName,
     s.completedHours, s.goalHours, s.compliancePercentage, s.absences, s.status,
   ]);
-  const csv = [header, ...rows].map((r) => r.join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `alumnos_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadCsv(toCsv(header, rows), `alumnos_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 function StatusBadge({ status }: { status: DeanStudent['status'] }) {
