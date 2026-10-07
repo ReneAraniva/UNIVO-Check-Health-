@@ -14,9 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Sin `version`: la toma de "packageManager" en package.json (pnpm@10.33.0).
+      # Pasar las dos hace fallar la acción con "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v6
-        with:
-          version: 10
 
       - uses: actions/setup-node@v7
         with:
@@ -57,9 +57,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Sin `version`: la toma de "packageManager" en package.json (pnpm@10.33.0).
+      # Pasar las dos hace fallar la acción con "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v6
-        with:
-          version: 10
 
       - uses: actions/setup-node@v7
         with:
