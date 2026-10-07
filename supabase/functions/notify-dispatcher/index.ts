@@ -113,6 +113,21 @@ async function sendEmail(to: string, subject: string, bodyHtml: string): Promise
 // ─────────────────────────────────────────────────────────────────────────────
 type Payload = Record<string, unknown>;
 
+// M-1 (auditoría 2026-10-06): el payload trae texto escrito por usuarios (motivo de
+// la justificación, notas del revisor, nombres). Sin escapar, un alumno podía meter
+// enlaces o HTML en el correo que reciben coordinadores y decano.
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+
+function htmlSafePayload(p: Payload): Payload {
+  return Object.fromEntries(
+    Object.entries(p).map(([k, v]) => [k, typeof v === 'string' ? escapeHtml(v) : v]),
+  );
+}
+
+// El asunto viaja como cabecera SMTP: sin saltos de línea (inyección de cabeceras).
+const singleLine = (value: string): string => value.replace(/[\r\n]+/g, ' ').trim();
+
 const TEMPLATES: Record<string, {
   title: string;
   pushBody:     (p: Payload) => string;
@@ -278,14 +293,12 @@ Deno.serve(withSentry('notify-dispatcher', async (req: Request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // Marcar como 'sent' atómicamente para evitar reenvíos
-  const { data: item, error: fetchErr } = await admin
-    .from('notification_outbox')
-    .update({ status: 'sent', sent_at: new Date().toISOString() })
-    .eq('id', body.outbox_id)
-    .eq('status', 'pending')
-    .select()
-    .single();
+  // Reclamo atómico (A-2): marca 'sent' + incrementa attempts en un solo UPDATE.
+  // Acepta 'pending' y 'failed' con intentos restantes — antes solo 'pending', así
+  // que los reintentos del cron sobre 'failed' respondían "skipped" para siempre.
+  const { data: claimed, error: fetchErr } = await admin.rpc('claim_outbox_item', { p_id: body.outbox_id });
+  type OutboxItem = { id: number; type: string; channel: string; target_user_id: string; payload: Payload | null };
+  const item = (Array.isArray(claimed) ? claimed[0] : claimed) as OutboxItem | null;
 
   if (fetchErr || !item) {
     return new Response(JSON.stringify({ skipped: true }), {
@@ -293,8 +306,9 @@ Deno.serve(withSentry('notify-dispatcher', async (req: Request) => {
     });
   }
 
-  const template = TEMPLATES[item.type as string];
+  const template = TEMPLATES[item.type];
   if (!template) {
+    await admin.from('notification_outbox').update({ status: 'skipped' }).eq('id', item.id);
     return new Response(JSON.stringify({ error: `Tipo desconocido: ${item.type}` }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
@@ -323,15 +337,16 @@ Deno.serve(withSentry('notify-dispatcher', async (req: Request) => {
           .eq('id', item.id);
       }
     } else {
+      // Sin token no hay nada que reintentar: estado terminal, fuera del cron.
       results.push('push_no_token');
       await admin
         .from('notification_outbox')
-        .update({ status: 'failed' })
+        .update({ status: 'skipped' })
         .eq('id', item.id);
     }
   } else if (item.channel === 'email') {
-    const subject = template.emailSubject(payload);
-    const html = template.emailHtml(payload);
+    const subject = singleLine(template.emailSubject(payload));
+    const html = template.emailHtml(htmlSafePayload(payload));
     const delivery = {
       email_channel_used: null as 'primary' | 'backup' | null,
       primary_email: recipientEmail || null,
@@ -372,10 +387,11 @@ Deno.serve(withSentry('notify-dispatcher', async (req: Request) => {
       }
     }
 
+    const noAddress = !recipientEmail && !delivery.backup_email;
     await admin
       .from('notification_outbox')
       .update({
-        status: delivery.email_channel_used ? 'sent' : 'failed',
+        status: delivery.email_channel_used ? 'sent' : noAddress ? 'skipped' : 'failed',
         payload: { ...payload, delivery },
       })
       .eq('id', item.id);
