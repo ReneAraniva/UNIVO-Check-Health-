@@ -99,5 +99,14 @@
     "react-dom": {
       "optional": true
     }
+  },
+  "pnpm": {
+    "overrides": {
+      "dompurify": "^3.4.16",
+      "websocket-driver": "^0.7.5",
+      "@grpc/grpc-js": "^1.13.6",
+      "protobufjs": "^7.6.5",
+      "fflate": "^0.8.3"
+    }
   }
 }

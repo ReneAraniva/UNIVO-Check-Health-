@@ -16,9 +16,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
           version: latest
 
@@ -29,9 +29,19 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
-      - name: Dump (schema + datos, sin objetos internos de la plataforma)
+      # Auditoría 2026-10-06 (A-3): `supabase db dump` sin flags vuelca SOLO el
+      # esquema. Los respaldos anteriores no tenían datos. Ahora van los tres
+      # (roles, esquema, datos) concatenados en el orden de restauración.
+      - name: Dump (roles + esquema + datos, sin objetos internos de la plataforma)
         run: |
-          supabase db dump --linked -f dump.sql
+          set -euo pipefail
+          supabase db dump --linked --role-only -f roles.sql
+          supabase db dump --linked -f schema.sql
+          supabase db dump --linked --data-only --use-copy -f data.sql
+          # Si el volcado de datos no trae ni una tabla de la app, fallar en rojo
+          # en vez de commitear un respaldo vacío.
+          grep -q 'COPY "public"."users"' data.sql || grep -q 'COPY public.users' data.sql
+          cat roles.sql schema.sql data.sql > dump.sql
           gzip -f dump.sql
 
       - name: Clonar el repo de backups (vía deploy key)

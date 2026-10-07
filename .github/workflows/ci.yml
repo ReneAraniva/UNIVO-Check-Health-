@@ -26,14 +26,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # C1-05: reporta dependencias vulnerables en cada PR sin bloquear el merge
-      # todavía — hoy (2026-08-31) hay altos conocidos en react-router y xlsx que
-      # René está resolviendo (R1-01/R1-02 en Tareas_Rene.md). Pasar a bloqueante
-      # (quitar `continue-on-error`) en cuanto esos dos estén mergeados y
-      # `pnpm audit --prod` salga limpio de altos/críticos.
-      - name: Auditoría de dependencias vulnerables (no bloqueante por ahora)
-        run: pnpm audit --prod
-        continue-on-error: true
+      # C1-05 / auditoría 2026-10-06: bloqueante para altos y críticos. Los
+      # transitivos de firebase y jspdf se fijan con pnpm.overrides en package.json.
+      - name: Auditoría de dependencias vulnerables
+        run: pnpm audit --prod --audit-level high
 
       - name: Lint
         run: pnpm exec tsc --noEmit
@@ -89,7 +85,7 @@ jobs:
       # claves de acá son las demo fijas de Supabase para stacks locales (siempre
       # las mismas, no son secretos), no las de producción.
       - name: Tests de RLS de seguridad
-        run: pnpm exec vitest run src/__tests__/rlsSecurity.test.ts
+        run: pnpm exec vitest run src/__tests__/rlsSecurity.test.ts src/__tests__/rlsAuditoria20261006.test.ts
         env:
           CI_RLS_INTEGRATION: 'true'
           SUPABASE_URL: http://127.0.0.1:54321
