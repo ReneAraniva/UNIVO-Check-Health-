@@ -34,9 +34,32 @@ Deno.serve(withSentry('send-credentials', async (req: Request) => {
     return json({ error: 'No tienes permiso para enviar credenciales.' }, 403);
   }
 
-  const { email, password, full_name, reset } = await req.json().catch(() => ({})) as
+  const { email: rawEmail, password, reset } = await req.json().catch(() => ({})) as
     { email?: string; password?: string; full_name?: string; reset?: boolean };
-  if (!email || !password) return json({ error: 'email y password requeridos' }, 400);
+  if (!rawEmail || !password) return json({ error: 'email y password requeridos' }, 400);
+  const email = rawEmail.trim().toLowerCase();
+
+  // Auditoría 2026-10-06: antes el destinatario y el nombre eran libres, así que
+  // esta función servía para mandar correos "oficiales" con HTML arbitrario a
+  // cualquier dirección. Ahora solo a un usuario existente que el solicitante
+  // puede gestionar, y el nombre sale de la base de datos.
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  const { data: target } = await admin.from('users').select('role, full_name').eq('email', email).maybeSingle();
+  if (!target) return json({ error: 'Usuario no encontrado.' }, 404);
+  const isAdmin = ['ADMIN', 'ADMINISTRADOR', 'DECANO'].includes(requesterRole);
+  const manageable = isAdmin
+    ? ['STUDENT', 'DOCENTE', 'COORDINATOR', 'ADMIN', 'REPRESENTATIVE']
+    : ['STUDENT', 'COORDINATOR'];
+  if (!manageable.includes((target.role ?? '').toUpperCase())) {
+    return json({ error: 'No tienes permiso para enviar credenciales a este usuario.' }, 403);
+  }
+  const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  const full_name = esc(target.full_name ?? '');
+  const safePassword = esc(password);
 
   const html = reset
     ? wrapHtml(`
@@ -44,7 +67,7 @@ Deno.serve(withSentry('send-credentials', async (req: Request) => {
       <p>Hola ${full_name ?? ''}, un administrador restableció tu contraseña de acceso. Usa esta contraseña temporal para ingresar:</p>
       <div class="cred">
         <p>Usuario (carné o correo): <code>${email}</code></p>
-        <p>Contraseña temporal (un solo uso): <code>${password}</code></p>
+        <p>Contraseña temporal (un solo uso): <code>${safePassword}</code></p>
       </div>
       <p><strong>Por seguridad, esta contraseña es de un solo uso.</strong> Al ingresar, el sistema
       te pedirá crear una contraseña nueva. Si no solicitaste este cambio, contacta a tu coordinación.</p>`)
@@ -53,7 +76,7 @@ Deno.serve(withSentry('send-credentials', async (req: Request) => {
       <p>Hola ${full_name ?? ''}, se ha creado tu cuenta institucional. Estas son tus credenciales de acceso:</p>
       <div class="cred">
         <p>Usuario (carné o correo): <code>${email}</code></p>
-        <p>Contraseña temporal (un solo uso): <code>${password}</code></p>
+        <p>Contraseña temporal (un solo uso): <code>${safePassword}</code></p>
       </div>
       <p><strong>Por seguridad, esta contraseña es de un solo uso.</strong> Al ingresar por primera vez,
       el sistema te pedirá crear una contraseña nueva antes de continuar.</p>`);
@@ -64,12 +87,14 @@ Deno.serve(withSentry('send-credentials', async (req: Request) => {
   const result = await sendMail({ to: email, subject, html });
   if (!result.ok) {
     const status = result.error === 'missing_gmail_credentials' ? 500 : 502;
-    return json({ error: 'No se pudo enviar el correo', detail: result.error }, status);
+    console.error('[send-credentials] fallo de envío:', result.error);
+    return json({ error: 'No se pudo enviar el correo' }, status);
   }
   return json({ ok: true });
   } catch (e) {
     // Garantiza CORS y un motivo legible ante cualquier excepción inesperada
     // (antes el runtime devolvía un 500 sin CORS = "CORS Missing Allow Origin").
-    return json({ error: 'Error interno en send-credentials', detail: e instanceof Error ? e.message : String(e) }, 500);
+    console.error('[send-credentials]', e);
+    return json({ error: 'Error interno en send-credentials' }, 500);
   }
 }));
