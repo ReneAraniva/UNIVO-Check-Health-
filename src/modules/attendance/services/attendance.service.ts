@@ -1,5 +1,6 @@
 import { supabase } from '@/shared/backend/supabaseClient';
 import { Attendance, DeviceInfo, GeoPoint, GeoPointSample, MotionSensorSample } from '../types';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 export const getDeviceInfo = (params?: {
   location?: GeoPoint | null;
@@ -66,7 +67,8 @@ const mapRow = (row: Record<string, unknown>): Attendance => ({
 
 export const getAttendance = async (): Promise<Attendance[]> => {
   const { data, error } = await supabase.from('attendances').select('*');
-  if (error || !data) return [];
+  if (error) { reportServiceError('attendance.service.getAttendance', error); return []; }
+  if (!data) return [];
   return data.map(mapRow);
 };
 

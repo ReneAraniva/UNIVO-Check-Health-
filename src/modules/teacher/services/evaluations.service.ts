@@ -3,6 +3,7 @@
 // las suyas (teacher_id = auth.uid()). UNIQUE (teacher_id, student_id, week_start).
 
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 export type WeeklyEvaluationInput = {
   studentId: string;
@@ -56,7 +57,8 @@ export async function fetchStudentEvaluations(studentId: string): Promise<Weekly
     .eq('student_id', studentId)
     .order('week_start', { ascending: false });
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('evaluations.service.fetchStudentEvaluations', error); return []; }
+  if (!data) return [];
 
   return (data as any[]).map((r) => ({
     id: r.id,

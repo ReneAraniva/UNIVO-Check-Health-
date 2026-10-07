@@ -23,13 +23,6 @@ type AttendanceResult = {
   message: string;
 };
 
-type DeviceFingerprintConflict = {
-  attendance_id: string;
-  student_id: string;
-  campus_id: string;
-  check_in: string;
-};
-
 const EARTH_RADIUS_METERS = 6371000;
 const MAX_HUMAN_SPEED_KMH = 140;
 const REQUIRED_PRACTICE_HOURS = 240;
@@ -147,38 +140,31 @@ const getCampusById = async (campusId: string): Promise<SiteCoverage | null> => 
   };
 };
 
-const logSharedDeviceConflict = async (params: {
-  actorUserId: string;
-  targetUserId: string;
-  attemptedCampusId: string;
-  activeCampusId: string;
-  activeAttendanceId: string;
-  deviceFingerprint: string;
-}) => {
-  await supabase.from('audit_log').insert({
-    action: 'SHARED_DEVICE_ACTIVE_CONFLICT',
-    actor_user_id: params.actorUserId,
-    target_user_id: params.targetUserId,
-    details: {
-      attempted_campus_id: params.attemptedCampusId,
-      active_campus_id: params.activeCampusId,
-      active_attendance_id: params.activeAttendanceId,
-      device_fingerprint: params.deviceFingerprint,
-    },
-  });
-};
+// Auditoría 2026-10-06: la entrada manual del encargado y la salida (alumno o staff)
+// ya no escriben attendances desde el navegador. Antes:
+//   · la salida del alumno hacía UPDATE directo, que la RLS bloquea (0 filas): la
+//     jornada quedaba abierta y el siguiente check-in fallaba;
+//   · check_out y worked_hours salían del reloj del cliente;
+//   · la entrada del encargado hacía INSERT directo sin política para staff.
+// Ahora son RPC SECURITY DEFINER (staff_register_check_in / register_check_out) con
+// la hora del servidor y las mismas validaciones que validate-qr-checkin. La
+// detección de GPS falso sigue calculándose aquí y viaja en device_info.
+type RpcAttendanceResult = { ok: boolean; message: string; attendance?: Record<string, unknown> };
 
-// Llama al RPC validate_location_coherence para verificar velocidad de desplazamiento.
-// Reemplaza la lógica client-side de processLocationReviewJob (eliminada en Fase 4).
-const checkLocationCoherence = async (studentId: string, location: GeoPoint): Promise<string | undefined> => {
-  const { data } = await supabase.rpc('validate_location_coherence', {
-    p_student_id: studentId,
-    p_current_lat: location.latitude,
-    p_current_lng: location.longitude,
-  });
-  return data?.[0]?.is_suspicious
-    ? 'Desplazamiento inusual detectado entre registros consecutivos.'
-    : undefined;
+const toAttendanceResult = (
+  data: unknown,
+  error: { message?: string } | null,
+  fallback: string,
+): AttendanceResult => {
+  if (error || !data) {
+    return { ok: false, message: error?.message ?? fallback };
+  }
+  const result = data as RpcAttendanceResult;
+  return {
+    ok: result.ok,
+    message: result.message,
+    attendance: result.ok && result.attendance ? mapAttendanceRow(result.attendance) : undefined,
+  };
 };
 
 export const registerStudentCheckIn = async (params: {
@@ -190,103 +176,18 @@ export const registerStudentCheckIn = async (params: {
   deviceFingerprint?: string;
   deviceInfo?: DeviceInfo;
 }): Promise<AttendanceResult> => {
-  const { data: validationData, error: validationError } = await supabase.rpc('validate_checkin_area', {
-    p_campus_id: params.practiceId,
-    p_current_lat: params.location.latitude,
-    p_current_lng: params.location.longitude,
-  });
-
-  if (validationError || !validationData || !validationData[0]?.is_allowed) {
-    return {
-      ok: false,
-      message: validationData?.[0]?.message ?? 'Ubicación fuera del área permitida.',
-    };
-  }
-
-  const { data: activeRecords } = await supabase
-    .from('attendances')
-    .select('id')
-    .eq('student_id', params.studentId)
-    .is('check_out', null);
-
-  if (activeRecords && activeRecords.length > 0) {
-    return { ok: false, message: 'Este estudiante ya tiene una entrada activa.' };
-  }
-
-  if (params.deviceFingerprint) {
-    const { data: deviceConflict } = await supabase.rpc('detect_device_fingerprint_conflict', {
-      p_device_fingerprint: params.deviceFingerprint,
-      p_campus_id: params.practiceId,
-      p_student_id: params.studentId,
-    });
-    const conflict = (deviceConflict?.[0] ?? null) as DeviceFingerprintConflict | null;
-
-    if (conflict) {
-      await logSharedDeviceConflict({
-        actorUserId: params.studentId,
-        targetUserId: conflict.student_id,
-        attemptedCampusId: params.practiceId,
-        activeCampusId: conflict.campus_id,
-        activeAttendanceId: conflict.attendance_id,
-        deviceFingerprint: params.deviceFingerprint,
-      });
-
-      return {
-        ok: false,
-        message: 'Dispositivo ya activo en otra sede. El intento fue enviado a auditoria.',
-      };
-    }
-  }
-
   const deviceInfo = analyzeFakeGpsPattern(params.deviceInfo);
-  const fakeGpsReason = deviceInfo?.fakeGpsAnalysis?.isFakeGps
-    ? `Posible GPS falso detectado (${Math.round(deviceInfo.fakeGpsAnalysis.confidence * 100)}%): ${deviceInfo.fakeGpsAnalysis.reasons.join(' ')}`
-    : undefined;
-
-  // Verificación de coherencia espacio-temporal (reemplaza processLocationReviewJob client-side)
-  const speedReason = await checkLocationCoherence(params.studentId, params.location);
-  const suspiciousReason = fakeGpsReason ?? speedReason;
-
-  const { data: attendanceData, error: insertError } = await supabase
-    .from('attendances')
-    .insert([
-      {
-        student_id: params.studentId,
-        campus_id: params.practiceId,
-        notes: params.notes,
-        check_in_location: params.location,
-        device_id: params.deviceId,
-        device_fingerprint: params.deviceFingerprint,
-        device_info: deviceInfo,
-        review_status: suspiciousReason ? 'OBSERVADO' : 'PENDIENTE',
-        suspicious_reason: suspiciousReason,
-        status: 'present',
-      },
-    ])
-    .select()
-    .single();
-
-  if (insertError || !attendanceData) {
-    return { ok: false, message: 'Error al registrar la asistencia.' };
-  }
-
-  if (fakeGpsReason) {
-    await supabase.from('audit_log').insert({
-      action: 'FAKE_GPS_DETECTED',
-      actor_user_id: params.studentId,
-      details: {
-        attendance_id: (attendanceData as Record<string, unknown>).id,
-        campus_id: params.practiceId,
-        confidence: deviceInfo?.fakeGpsConfidence,
-      },
-    });
-  }
-
-  return {
-    ok: true,
-    attendance: mapAttendanceRow(attendanceData as Record<string, unknown>),
-    message: 'Entrada registrada con hora oficial del servidor.',
-  };
+  const { data, error } = await supabase.rpc('staff_register_check_in', {
+    p_student_id: params.studentId,
+    p_campus_id: params.practiceId,
+    p_lat: params.location.latitude,
+    p_lng: params.location.longitude,
+    p_notes: params.notes ?? null,
+    p_device_id: params.deviceId ?? null,
+    p_device_fingerprint: params.deviceFingerprint ?? null,
+    p_device_info: deviceInfo ?? null,
+  });
+  return toAttendanceResult(data, error, 'Error al registrar la asistencia.');
 };
 
 export const registerStudentCheckOut = async (params: {
@@ -296,70 +197,17 @@ export const registerStudentCheckOut = async (params: {
   deviceFingerprint?: string;
   deviceInfo?: DeviceInfo;
 }): Promise<AttendanceResult> => {
-  const { data: attendance, error: fetchError } = await supabase
-    .from('attendances')
-    .select('*')
-    .eq('id', params.attendanceId)
-    .single();
-
-  if (fetchError || !attendance) {
-    return { ok: false, message: 'No se encontró el registro activo.' };
-  }
-
-  if (attendance.check_out) {
-    return { ok: false, message: 'La salida ya fue registrada para esta jornada.' };
-  }
-
-  if (attendance.device_fingerprint && params.deviceFingerprint && attendance.device_fingerprint !== params.deviceFingerprint) {
-    await supabase.from('audit_log').insert({
-      action: 'CHECKOUT_DEVICE_FINGERPRINT_MISMATCH',
-      actor_user_id: attendance.student_id,
-      target_user_id: attendance.student_id,
-      details: {
-        attendance_id: params.attendanceId,
-        campus_id: attendance.campus_id,
-        check_in_device_fingerprint: attendance.device_fingerprint,
-        check_out_device_fingerprint: params.deviceFingerprint,
-      },
-    });
-    return { ok: false, message: 'La salida debe registrarse desde el mismo dispositivo usado para la entrada.' };
-  }
-
-  const now = new Date();
-  const workedHours = Number(
-    ((now.getTime() - new Date(attendance.check_in as string).getTime()) / (1000 * 60 * 60)).toFixed(2),
-  );
-
   const deviceInfo = analyzeFakeGpsPattern(params.deviceInfo);
-  const fakeGpsReason = deviceInfo?.fakeGpsAnalysis?.isFakeGps
-    ? `Posible GPS falso detectado (${Math.round(deviceInfo.fakeGpsAnalysis.confidence * 100)}%): ${deviceInfo.fakeGpsAnalysis.reasons.join(' ')}`
-    : undefined;
-
-  const { data: updatedAttendance, error: updateError } = await supabase
-    .from('attendances')
-    .update({
-      check_out: now.toISOString(),
-      check_out_location: params.location,
-      worked_hours: workedHours,
-      device_id: params.deviceId ?? attendance.device_id,
-      check_out_device_fingerprint: params.deviceFingerprint ?? attendance.device_fingerprint,
-      device_info: deviceInfo ?? attendance.device_info,
-      review_status: fakeGpsReason ? 'OBSERVADO' : attendance.review_status,
-      suspicious_reason: fakeGpsReason ?? attendance.suspicious_reason,
-    })
-    .eq('id', params.attendanceId)
-    .select()
-    .single();
-
-  if (updateError || !updatedAttendance) {
-    return { ok: false, message: updateError?.message ?? 'Error al registrar la salida.' };
-  }
-
-  return {
-    ok: true,
-    attendance: mapAttendanceRow(updatedAttendance as Record<string, unknown>),
-    message: 'Salida registrada y horas acumuladas correctamente.',
-  };
+  const { data, error } = await supabase.rpc('register_check_out', {
+    p_attendance_id: params.attendanceId,
+    p_lat: params.location.latitude,
+    p_lng: params.location.longitude,
+    p_accuracy: params.location.accuracyMeters ?? deviceInfo?.gpsAccuracy ?? null,
+    p_device_id: params.deviceId ?? null,
+    p_device_fingerprint: params.deviceFingerprint ?? null,
+    p_device_info: deviceInfo ?? null,
+  });
+  return toAttendanceResult(data, error, 'Error al registrar la salida.');
 };
 
 export const getActiveStudentsSnapshot = async (): Promise<ActiveStudentRecord[]> => {

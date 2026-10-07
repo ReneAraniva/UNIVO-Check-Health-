@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // #19 — Solicitudes de credenciales desde el login.
 export type AccessRequest = {
@@ -40,7 +41,8 @@ export async function fetchPendingAccessRequests(): Promise<AccessRequest[]> {
     .select('id, full_name, student_code, email, career, requested_role, reason, status, created_at')
     .eq('status', 'pending')
     .order('created_at', { ascending: true });
-  if (error || !data) return [];
+  if (error) { reportServiceError('access.service.fetchPendingAccessRequests', error); return []; }
+  if (!data) return [];
   return (data as Record<string, any>[]).map((r) => ({
     id: r.id,
     fullName: r.full_name,

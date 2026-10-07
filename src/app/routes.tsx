@@ -52,6 +52,31 @@ const HospitalLivePage = lazyPage(() => import('@/modules/hospital/pages/Hospita
 const HospitalIncidentsPage = lazyPage(() => import('@/modules/hospital/pages/HospitalIncidentsPage'), 'HospitalIncidentsPage');
 const HospitalSubjectsPage = lazyPage(() => import('@/modules/hospital/pages/HospitalSubjectsPage'), 'HospitalSubjectsPage');
 
+// Auditoría 2026-10-06 (M-4): estas rutas del encargado no tenían guard y un
+// alumno podía abrir la UI de registro manual o los reportes. Los datos ya estaban
+// protegidos por RLS; el guard evita pantallas rotas o engañosas.
+const STAFF_ROLES: Parameters<typeof RoleGuard>[0]['allow'] = ['ADMIN', 'COORDINATOR', 'COORDINADOR'];
+const CheckInRoute = () => (
+  <RoleGuard allow={STAFF_ROLES}>
+    <CheckIn />
+  </RoleGuard>
+);
+const StudentsRoute = () => (
+  <RoleGuard allow={STAFF_ROLES}>
+    <Students />
+  </RoleGuard>
+);
+const PracticesRoute = () => (
+  <RoleGuard allow={STAFF_ROLES}>
+    <Practices />
+  </RoleGuard>
+);
+const ReportsRoute = () => (
+  <RoleGuard allow={STAFF_ROLES}>
+    <Reports />
+  </RoleGuard>
+);
+
 const DeanDashboardRoute = () => (
   <RoleGuard allow={['ADMIN']}>
     <DeanDashboardPage />
@@ -192,10 +217,10 @@ export const router = createBrowserRouter([
     errorElement: <RouteError />,
     children: [
       { index: true, Component: Dashboard },
-      { path: 'checkin', Component: CheckIn },
-      { path: 'students', Component: Students },
-      { path: 'practices', Component: Practices },
-      { path: 'reports', Component: Reports },
+      { path: 'checkin', Component: CheckInRoute },
+      { path: 'students', Component: StudentsRoute },
+      { path: 'practices', Component: PracticesRoute },
+      { path: 'reports', Component: ReportsRoute },
       { path: 'users', Component: UsersRoute },
       { path: 'profile', Component: ProfilePage },
       { path: 'rotations', Component: RotationsCalendarPage },

@@ -1,5 +1,6 @@
 import { supabase } from '@/shared/backend/supabaseClient';
 import type { LiveMapStudent } from '@/shared/components/StudentLiveMap';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // HU-38 / HU-40 — Portal del Representante Hospitalario. Todo va por RPCs
 // SECURITY DEFINER (server-side) que restringen al representante a su propia sede.
@@ -18,7 +19,8 @@ export type CampusActiveStudent = {
 
 export async function fetchCampusActiveStudents(): Promise<CampusActiveStudent[]> {
   const { data, error } = await supabase.rpc('get_campus_active_students');
-  if (error || !data) return [];
+  if (error) { reportServiceError('hospital.service.fetchCampusActiveStudents', error); return []; }
+  if (!data) return [];
   return (data as any[]).map((r) => ({
     attendanceId: r.attendance_id,
     studentId: r.student_id,
@@ -69,7 +71,8 @@ export type CampusSubject = {
 
 export async function fetchCampusSubjects(): Promise<CampusSubject[]> {
   const { data, error } = await supabase.rpc('get_campus_subjects');
-  if (error || !data) return [];
+  if (error) { reportServiceError('hospital.service.fetchCampusSubjects', error); return []; }
+  if (!data) return [];
   return (data as any[]).map((r) => ({
     subjectId: r.subject_id ?? null,
     subjectCode: r.subject_code ?? '',
@@ -91,7 +94,8 @@ export type ConductReport = {
 
 export async function fetchMyConductReports(): Promise<ConductReport[]> {
   const { data, error } = await supabase.rpc('get_my_conduct_reports');
-  if (error || !data) return [];
+  if (error) { reportServiceError('hospital.service.fetchMyConductReports', error); return []; }
+  if (!data) return [];
   return (data as any[]).map((r) => ({
     id: r.id,
     studentName: r.student_name ?? 'Estudiante',

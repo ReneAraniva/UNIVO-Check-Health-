@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // R-03 — Feriados / días no hábiles. Catálogo compartido: el progreso del alumno
 // los excluye de las ausencias y el coordinador/decano los gestiona.
@@ -11,7 +12,8 @@ export async function fetchHolidays(): Promise<Holiday[]> {
     .from('holidays')
     .select('holiday_date, name, recurring')
     .order('holiday_date');
-  if (error || !data) return [];
+  if (error) { reportServiceError('holidays.service.fetchHolidays', error); return []; }
+  if (!data) return [];
   return (data as any[]).map((h) => ({
     date: h.holiday_date as string,
     name: h.name as string,

@@ -11,7 +11,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
 import { withSentry } from '../_shared/sentry.ts';
 
-type Action = 'create' | 'update' | 'delete' | 'reset-password';
+type Action = 'create' | 'update' | 'delete' | 'reset-password' | 'set-active';
 
 type Body = {
   action?: Action;
@@ -24,9 +24,25 @@ type Body = {
   career?: string | null;
   academic_level?: number | null;
   campus_id?: string | null;
-  // update / delete / reset
+  // update / delete / reset / set-active
   id?: string;
+  is_active?: boolean;
 };
+
+const UNIVO_EMAIL = /^[a-z0-9._%+-]+@univo\.edu\.sv$/;
+
+// Bloquear o desbloquear el inicio de sesión en Auth. is_active en public.users
+// solo lo leía la app; con el ban, un JWT nuevo tampoco se puede obtener.
+async function setAuthBan(
+  admin: ReturnType<typeof createClient>,
+  userId: string,
+  banned: boolean,
+): Promise<string | null> {
+  const { error } = await admin.auth.admin.updateUserById(userId, {
+    ban_duration: banned ? '876000h' : 'none',
+  });
+  return error?.message ?? null;
+}
 
 // Nivel académico (escala híbrida año/ciclo): smallint 1..10 o null. Solo aplica a STUDENT.
 function normalizeAcademicLevel(value: unknown, role: string): number | null {
@@ -94,7 +110,8 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
   if (authError || !user) return json({ error: 'Sesión inválida' }, 401);
 
   // Rol del solicitante (lee su propia fila vía RLS)
-  const { data: profile } = await userClient.from('users').select('role').eq('id', user.id).single();
+  const { data: profile } = await userClient.from('users').select('role, is_active').eq('id', user.id).single();
+  if (profile?.is_active === false) return json({ error: 'Tu cuenta está desactivada.' }, 403);
   const rawRequesterRole = (profile?.role ?? '').toUpperCase();
   // Normaliza sinónimos: un decano puede tener rol 'ADMINISTRADOR'/'DECANO'.
   const requesterRole = (rawRequesterRole === 'ADMINISTRADOR' || rawRequesterRole === 'DECANO') ? 'ADMIN' : rawRequesterRole;
@@ -144,6 +161,10 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
         return json({ error: role === 'STUDENT'
           ? 'Carné de estudiante inválido (debe ser U + 8 dígitos).'
           : 'Código inválido: 4 a 9 caracteres alfanuméricos.' }, 400);
+      }
+      // El email termina en un filtro .or() de PostgREST: solo formato institucional.
+      if (!UNIVO_EMAIL.test(email)) {
+        return json({ error: 'El correo debe ser institucional (@univo.edu.sv).' }, 400);
       }
       if ((body.password ?? '').length < 8) {
         return json({ error: 'La contraseña debe tener al menos 8 caracteres.' }, 400);
@@ -219,18 +240,30 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
       if (!canManageRole(target.role)) {
         return json({ error: 'No tienes permiso para editar a este usuario.' }, 403);
       }
-      const newRole = (body.role ?? 'STUDENT').toUpperCase();
+      // Solo se actualiza lo que viene en el body. Antes un campo ausente se
+      // interpretaba como role='STUDENT' y full_name='' (degradaba en silencio).
+      const rawNewRole = body.role != null ? body.role.toUpperCase() : (target.role ?? '').toUpperCase();
+      const newRole = rawNewRole === 'ADMINISTRADOR' || rawNewRole === 'DECANO' ? 'ADMIN' : rawNewRole;
       if (!canManageRole(newRole)) {
         return json({ error: 'No tienes permiso para asignar ese rol.' }, 403);
       }
+      if (body.id === user.id && newRole !== requesterRole) {
+        return json({ error: 'No puedes cambiar tu propio rol.' }, 400);
+      }
 
-      const { error } = await admin.from('users').update({
-        full_name: body.full_name ?? '',
-        role:      newRole,
-        career:    newRole === 'STUDENT' ? (body.career ?? null) : null,
-        academic_level: normalizeAcademicLevel(body.academic_level, newRole),
-        campus_id: newRole === 'REPRESENTATIVE' ? (body.campus_id ?? null) : null,
-      }).eq('id', body.id);
+      const patch: Record<string, unknown> = { role: newRole };
+      if (body.full_name != null) patch.full_name = body.full_name.trim();
+      if (body.career !== undefined || body.role != null) {
+        patch.career = newRole === 'STUDENT' ? (body.career ?? null) : null;
+      }
+      if (body.academic_level !== undefined || body.role != null) {
+        patch.academic_level = normalizeAcademicLevel(body.academic_level, newRole);
+      }
+      if (body.campus_id !== undefined || body.role != null) {
+        patch.campus_id = newRole === 'REPRESENTATIVE' ? (body.campus_id ?? null) : null;
+      }
+
+      const { error } = await admin.from('users').update(patch).eq('id', body.id);
       if (error) return json({ error: error.message }, 400);
       await logDelegatedUserAction(admin, {
         action: 'DELEGATED_USER_UPDATED',
@@ -240,8 +273,7 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
         details: {
           previous_role: target.role,
           new_role: newRole,
-          full_name: body.full_name ?? '',
-          career: newRole === 'STUDENT' ? (body.career ?? null) : null,
+          changed_fields: Object.keys(patch),
         },
       });
       return json({ ok: true });
@@ -259,14 +291,37 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
       if (!canManageRole(target.role)) {
         return json({ error: 'No tienes permiso para eliminar a este usuario.' }, 403);
       }
+      if (body.id === user.id) {
+        return json({ error: 'No puedes eliminar tu propia cuenta.' }, 400);
+      }
 
-      // attendances.student_id NO tiene ON DELETE CASCADE → bloquea el borrado del
-      // perfil. Las borramos antes (y las justificaciones, por su FK a attendances).
-      // El resto (teacher_groups, push_tokens, weekly_evaluations…) cae por CASCADE.
-      await admin.from('justifications').delete().eq('student_id', body.id);
-      const { error: attErr } = await admin.from('attendances').delete().eq('student_id', body.id);
-      if (attErr) {
-        return json({ error: `No se pudieron eliminar las asistencias del usuario: ${attErr.message}` }, 400);
+      // A-5 (auditoría 2026-10-06): antes se borraban asistencias y justificaciones
+      // para poder borrar el perfil — un clic (también de un DOCENTE) eliminaba las
+      // horas certificadas del alumno. Si hay historial, la cuenta se DESACTIVA
+      // (y se bloquea el login) en vez de borrarse.
+      const [{ count: attCount }, { count: justCount }] = await Promise.all([
+        admin.from('attendances').select('id', { count: 'exact', head: true }).eq('student_id', body.id),
+        admin.from('justifications').select('id', { count: 'exact', head: true }).eq('student_id', body.id),
+      ]);
+      if ((attCount ?? 0) > 0 || (justCount ?? 0) > 0) {
+        const { error: deactErr } = await admin.from('users').update({ is_active: false }).eq('id', body.id);
+        if (deactErr) return json({ error: `No se pudo desactivar al usuario: ${deactErr.message}` }, 400);
+        const banErr = await setAuthBan(admin, body.id, true);
+        if (banErr) return json({ error: `Usuario desactivado, pero falló el bloqueo en Auth: ${banErr}` }, 400);
+        await logDelegatedUserAction(admin, {
+          action: 'DELEGATED_USER_DEACTIVATED',
+          actorUserId: user.id,
+          actorRole: requesterRole,
+          targetUserId: body.id,
+          details: {
+            reason: 'delete_requested_with_history',
+            attendances: attCount ?? 0,
+            justifications: justCount ?? 0,
+            target_email: target.email,
+            target_role: target.role,
+          },
+        });
+        return json({ ok: true, deactivated: true });
       }
 
       const { error: profErr } = await admin.from('users').delete().eq('id', body.id);
@@ -324,6 +379,39 @@ Deno.serve(withSentry('admin-users', async (req: Request) => {
         },
       });
       return json({ ok: true, password: tempPassword, email });
+    }
+
+    case 'set-active': {
+      // Antes la UI hacía UPDATE directo de is_active y el trigger
+      // fn_protect_users_columns lo rechazaba (columna solo del sistema).
+      if (!body.id || typeof body.is_active !== 'boolean') {
+        return json({ error: 'id e is_active requeridos' }, 400);
+      }
+      if (body.id === user.id) return json({ error: 'No puedes desactivar tu propia cuenta.' }, 400);
+
+      const { data: target } = await admin
+        .from('users')
+        .select('role, email')
+        .eq('id', body.id)
+        .single();
+      if (!target) return json({ error: 'Usuario no encontrado.' }, 404);
+      if (!canManageRole(target.role)) {
+        return json({ error: 'No tienes permiso para cambiar el estado de este usuario.' }, 403);
+      }
+
+      const { error } = await admin.from('users').update({ is_active: body.is_active }).eq('id', body.id);
+      if (error) return json({ error: error.message }, 400);
+      const banErr = await setAuthBan(admin, body.id, !body.is_active);
+      if (banErr) return json({ error: `Estado guardado, pero falló el bloqueo en Auth: ${banErr}` }, 400);
+
+      await logDelegatedUserAction(admin, {
+        action: body.is_active ? 'DELEGATED_USER_ACTIVATED' : 'DELEGATED_USER_DEACTIVATED',
+        actorUserId: user.id,
+        actorRole: requesterRole,
+        targetUserId: body.id,
+        details: { target_email: target.email, target_role: target.role },
+      });
+      return json({ ok: true });
     }
 
     default:

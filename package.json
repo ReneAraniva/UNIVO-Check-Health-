@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "vite build",
     "dev": "vite",
@@ -94,6 +98,15 @@
     },
     "react-dom": {
       "optional": true
+    }
+  },
+  "pnpm": {
+    "overrides": {
+      "dompurify": "^3.4.16",
+      "websocket-driver": "^0.7.5",
+      "@grpc/grpc-js": "^1.13.6",
+      "protobufjs": "^7.6.5",
+      "fflate": "^0.8.3"
     }
   }
 }

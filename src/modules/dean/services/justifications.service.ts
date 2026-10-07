@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 const JUSTIFICATION_BUCKET = 'justifications';
 const SIGNED_URL_TTL_SECONDS = 60 * 10;
@@ -217,7 +218,8 @@ export async function fetchStudentJustifications(): Promise<StudentJustification
     .eq('student_id', authData.user.id)
     .order('creado_en', { ascending: false });
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('justifications.service.fetchStudentJustifications', error); return []; }
+  if (!data) return [];
 
   return Promise.all((data as any[]).map(async (row) => ({
     id: row.id,
@@ -244,7 +246,8 @@ export async function fetchStudentAttendances(): Promise<AttendanceOption[]> {
     .order('date', { ascending: false })
     .limit(60);
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('justifications.service.fetchStudentAttendances', error); return []; }
+  if (!data) return [];
 
   return (data as any[]).map((row) => ({
     id: row.id,
@@ -399,7 +402,8 @@ export async function fetchRejectedJustifications(): Promise<PendingJustificatio
     .eq('escalated', false)
     .order('actualizado_en', { ascending: false });
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('justifications.service.fetchRejectedJustifications', error); return []; }
+  if (!data) return [];
 
   return Promise.all((data as unknown as JustificationRow[]).map(mapPendingJustification));
 }

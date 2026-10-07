@@ -15,6 +15,7 @@ import type { Student } from '@/modules/students/types';
 import type { Practice } from '@/modules/practices/types';
 import { format } from 'date-fns';
 import { PageHeader } from '@/shared/components/PageHeader';
+import { downloadCsv, toCsv } from '@/shared/utils/csv';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/shared/components/ui/table';
@@ -80,14 +81,7 @@ export function Reports() {
       duration(r.checkIn, r.checkOut),
       r.status,
     ]);
-    const csv = [header, ...rows].map((row) => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `reporte-${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(toCsv(header, rows), `reporte-${format(new Date(), 'yyyy-MM-dd')}.csv`);
   };
 
   const exportPDF = () => {

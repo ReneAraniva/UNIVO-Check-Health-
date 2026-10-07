@@ -26,13 +26,11 @@ Deno.serve(withSentry('generate-campus-qr', async (req: Request) => {
 
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  // Auth: coordinador autenticado O llamada interna con dispatch_webhook_secret
-  const webhookSecret = Deno.env.get('DISPATCH_WEBHOOK_SECRET');
-  const isInternalCall = webhookSecret && authHeader === `Bearer ${webhookSecret}`;
-
-  let requester: { id: string; role: string } | null = null;
-
-  if (!isInternalCall) {
+  // Auth: solo staff autenticado. La antigua "llamada interna" con
+  // DISPATCH_WEBHOOK_SECRET era del cron generate-daily-qrs (desprogramado desde la
+  // Fase 3) y reutilizaba el secreto del dispatcher como bearer: se eliminó.
+  let requester: { id: string; role: string };
+  {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -54,14 +52,14 @@ Deno.serve(withSentry('generate-campus-qr', async (req: Request) => {
     requester = { id: user.id, role };
   }
 
-  const body = await req.json().catch(() => ({})) as { campus_id?: string };
+  const body = await req.json().catch(() => ({})) as { campus_id?: string; regenerate?: boolean };
   if (!body.campus_id) {
     return new Response(JSON.stringify({ error: 'campus_id requerido' }), {
       status: 400, headers: { ...cors, 'Content-Type': 'application/json' },
     });
   }
 
-  if (requester && requester.role !== 'ADMIN') {
+  if (requester.role !== 'ADMIN') {
     const column = requester.role === 'COORDINADOR' ? 'coordinator_id' : 'teacher_id';
     const { data: assignment } = await admin
       .from('teacher_groups')
@@ -96,7 +94,11 @@ Deno.serve(withSentry('generate-campus-qr', async (req: Request) => {
   let token: string;
   let shortCode: string;
 
-  if (cached?.token) {
+  // M-7 (auditoría 2026-10-06): regenerar revoca el QR y el código anteriores —
+  // validate-qr-checkin solo acepta el token y el código guardados en campus_qr.
+  // Útil si una foto del QR se filtró; antes la única salida era rotar
+  // QR_JWT_SECRET, que invalidaba TODAS las sedes.
+  if (cached?.token && !body.regenerate) {
     token = cached.token as string;
     shortCode = (cached.short_code as string) ?? await deriveShortCode(body.campus_id, 'STATIC', qrSecret);
   } else {
@@ -106,13 +108,29 @@ Deno.serve(withSentry('generate-campus-qr', async (req: Request) => {
     token = await new jose.SignJWT({ campus_id: body.campus_id })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .sign(secretKey);
-    shortCode = await deriveShortCode(body.campus_id, 'STATIC', qrSecret);
+    // Primera generación: código determinista (compatibilidad con los ya impresos).
+    // Regeneración: código nuevo, para que el anterior deje de servir.
+    shortCode = await deriveShortCode(body.campus_id, cached?.token ? crypto.randomUUID() : 'STATIC', qrSecret);
 
-    await admin.from('campus_qr').upsert(
+    const { error: saveError } = await admin.from('campus_qr').upsert(
       { campus_id: body.campus_id, token, short_code: shortCode, updated_at: new Date().toISOString() },
       { onConflict: 'campus_id' },
     );
+    if (saveError) {
+      return new Response(JSON.stringify({ error: 'No se pudo guardar el QR de la sede.' }), {
+        status: 500, headers: { ...cors, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (cached?.token) {
+      await admin.from('audit_log').insert({
+        action: 'CAMPUS_QR_REGENERATED',
+        actor_user_id: requester.id,
+        details: { campus_id: body.campus_id, actor_role: requester.role },
+      });
+    }
   }
 
   const qrDataUrl: string = await QRCode.toDataURL(token, { width: 280, margin: 2, errorCorrectionLevel: 'M' });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { AlertTriangle, Building2, CalendarDays, Clock, Compass, Download, FileText, Loader2, MapPin, MapPinned, Pencil, Phone, Plus, QrCode, Radio, Search, Stethoscope, Timer, Trash2 } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarDays, Clock, Compass, Download, FileText, Loader2, MapPin, MapPinned, Pencil, Phone, Plus, QrCode, Radio, RefreshCw, Search, Stethoscope, Timer, Trash2 } from 'lucide-react';
 import { useDeanStore } from '@/modules/dean/store/useDeanStore';
 import type { Location } from '@/modules/dean/types';
 import { createCampus, updateCampus, deleteCampus, toggleCampusActive, type CampusFormData } from '@/modules/dean/services/dean.service';
@@ -44,6 +44,7 @@ export function DeanLocationsPage() {
   const [deleteBlocked, setDeleteBlocked] = useState(false);
   const [qrModal, setQrModal] = useState<QrModal | null>(null);
   const [generatingQrId, setGeneratingQrId] = useState<string | null>(null);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<CanonicalRole | null>(null);
   const canManageCampuses = currentRole === 'ADMIN';
@@ -153,16 +154,18 @@ export function DeanLocationsPage() {
   const set = (field: keyof CampusFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
-  const handleGenerateQr = async (campusId: string, campusName: string) => {
+  const handleGenerateQr = async (campusId: string, campusName: string, regenerate = false) => {
     setGeneratingQrId(campusId);
     const { data, error } = await supabase.functions.invoke('generate-campus-qr', {
-      body: { campus_id: campusId },
+      body: { campus_id: campusId, regenerate },
     });
     setGeneratingQrId(null);
+    setConfirmRegenerate(false);
     if (error || !data?.qr_data_url) {
       toast.error(data?.error ?? 'No se pudo generar el QR. Verifica la configuración del servidor.');
       return;
     }
+    if (regenerate) toast.success('QR regenerado. El QR y el código anteriores ya no funcionan.');
     setQrModal({ campusId, campusName, qrDataUrl: data.qr_data_url, shortCode: data.short_code ?? '' });
   };
 
@@ -526,7 +529,15 @@ export function DeanLocationsPage() {
       <LocationDetailModal location={selectedLocation} onClose={() => setSelectedLocation(null)} />
 
       {/* Modal QR del día — T-08.1 */}
-      <Dialog open={Boolean(qrModal)} onOpenChange={(open) => !open && setQrModal(null)}>
+      <Dialog
+        open={Boolean(qrModal)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setQrModal(null);
+            setConfirmRegenerate(false);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-sm">
           {qrModal && (
             <>
@@ -558,6 +569,35 @@ export function DeanLocationsPage() {
                 <Button variant="outline" className="w-full" onClick={handleDownloadQr}>
                   <Download className="w-4 h-4 mr-2" />Descargar PNG
                 </Button>
+                {/* Revoca el QR impreso: útil si una foto del QR o el código se filtró. */}
+                {confirmRegenerate ? (
+                  <div className="w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                    <p className="mb-2">
+                      El QR impreso y el código actual <strong>dejarán de funcionar</strong> de inmediato.
+                      Tendrás que imprimir el nuevo.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmRegenerate(false)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="flex-1"
+                        disabled={generatingQrId === qrModal.campusId}
+                        onClick={() => void handleGenerateQr(qrModal.campusId, qrModal.campusName, true)}
+                      >
+                        {generatingQrId === qrModal.campusId
+                          ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          : <RefreshCw className="w-4 h-4 mr-2" />}
+                        Regenerar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button variant="ghost" size="sm" className="w-full text-gray-600" onClick={() => setConfirmRegenerate(true)}>
+                    <RefreshCw className="w-4 h-4 mr-2" />Regenerar QR (revoca el actual)
+                  </Button>
+                )}
               </div>
             </>
           )}

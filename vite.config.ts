@@ -32,7 +32,10 @@ export default defineConfig({
           if (id.includes('@mui') || id.includes('@emotion')) return 'vendor-mui';
           if (id.includes('html5-qrcode')) return 'vendor-qr';
           if (id.includes('firebase')) return 'vendor-firebase';
-          if (id.includes('react-router') || id.includes('react-dom') || id.includes('/react/')) return 'vendor-react';
+          // Solo los paquetes de React en sí. El antiguo `id.includes('/react/')` también
+          // atrapaba subrutas como `motion/react/` o `@sentry/react/` (una vez que pnpm
+          // resuelve bien el peer de React) y las metía en este chunk de carga inicial.
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|scheduler)[\\/]/.test(id)) return 'vendor-react';
           // El resto (supabase, radix, zustand, etc.): se deja a Vite, que respeta
           // los límites de las rutas lazy en vez de forzar un mega-chunk eager.
           return undefined;

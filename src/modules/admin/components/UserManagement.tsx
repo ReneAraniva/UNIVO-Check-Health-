@@ -348,10 +348,14 @@ export function UserManagement() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeletingUserId(deleteTarget.id);
-    const result = await invokeAdmin('delete', { id: deleteTarget.id });
+    const result = await invokeAdmin<{ deactivated?: boolean }>('delete', { id: deleteTarget.id });
     setDeletingUserId(null);
     if (!result.ok) { toast.error(result.message ?? 'Error al eliminar'); return; }
-    toast.success('Usuario eliminado');
+    // Con historial de asistencias/justificaciones el servidor desactiva en vez de
+    // borrar, para no perder las horas certificadas.
+    toast.success(result.data?.deactivated
+      ? 'El usuario tiene historial de asistencias: se desactivó y se bloqueó su acceso en lugar de eliminarlo.'
+      : 'Usuario eliminado');
     setDeleteTarget(null);
     void loadUsers();
   };
@@ -755,7 +759,9 @@ export function UserManagement() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5 text-red-600" />Eliminar usuario</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Eliminar <strong>{deleteTarget?.email}</strong>? Esta acción no se puede deshacer.
+              ¿Eliminar <strong>{deleteTarget?.email}</strong>? Si el usuario ya tiene asistencias o
+              justificaciones, se desactivará y se bloqueará su acceso en lugar de borrarse, para conservar su
+              historial. Si no tiene historial, el borrado no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

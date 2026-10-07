@@ -1,4 +1,5 @@
 import { supabase } from '@/shared/backend/supabaseClient';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 // B5 + B6: catálogo académico (carreras y materias) gestionado por ADMIN/COORDINATOR.
 
@@ -27,7 +28,8 @@ export async function fetchCareers(): Promise<Career[]> {
     .from('careers')
     .select('id, name, total_cycles, is_active')
     .order('name');
-  if (error || !data) return [];
+  if (error) { reportServiceError('catalog.service.fetchCareers', error); return []; }
+  if (!data) return [];
   return data.map((c: any) => ({
     id: c.id, name: c.name, totalCycles: c.total_cycles, isActive: c.is_active,
   }));
@@ -59,7 +61,8 @@ export async function fetchSubjects(): Promise<Subject[]> {
     .from('subjects')
     .select('id, code, name, career, required_hours, min_academic_level, is_active')
     .order('code');
-  if (error || !data) return [];
+  if (error) { reportServiceError('catalog.service.fetchSubjects', error); return []; }
+  if (!data) return [];
   return data.map((s: any) => ({
     id: s.id, code: s.code, name: s.name, career: s.career,
     requiredHours: s.required_hours, minAcademicLevel: s.min_academic_level, isActive: s.is_active,

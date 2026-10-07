@@ -1,6 +1,7 @@
 import { supabase } from '@/shared/backend/supabaseClient';
 import type { DeanAttendance, DeanGlobalStats, DeanStudent, Location } from '../types';
 import { canonicalRole } from '@/shared/utils/roles';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 const DEFAULT_GOAL_HOURS = 240;
 const SHARED_DEVICE_ALERT_ACTION = 'SHARED_DEVICE_ACTIVE_CONFLICT';
@@ -189,7 +190,8 @@ export async function fetchDeanLocations(scope?: CampusScope): Promise<Location[
     .select('id, name, latitude, longitude, radius_meters, location_label, supervisor_name, supervisor_phone, schedule, start_date, end_date, description, is_active, max_students, check_in_from, check_in_to')
     .order('name');
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('dean.service.fetchDeanLocations', error); return []; }
+  if (!data) return [];
 
   const rows = scope?.campusIds
     ? (data as CampusRow[]).filter((c) => scope.campusIds!.has(c.id))
@@ -227,12 +229,25 @@ export async function toggleCampusActive(id: string, isActive: boolean): Promise
   return { ok: true };
 }
 
+// is_active es columna del sistema (fn_protect_users_columns rechaza el UPDATE
+// directo desde el navegador), así que el cambio pasa por la Edge Function
+// admin-users, que además bloquea/desbloquea el inicio de sesión en Auth.
 export async function toggleUserActive(id: string, isActive: boolean): Promise<{ ok: boolean; message?: string }> {
-  const { error } = await supabase
-    .from('users')
-    .update({ is_active: isActive })
-    .eq('id', id);
-  if (error) return { ok: false, message: error.message };
+  const { data, error } = await supabase.functions.invoke('admin-users', {
+    body: { action: 'set-active', id, is_active: isActive },
+  });
+  if (error) {
+    let message = error.message ?? 'Error al cambiar estado';
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const parsed = await ctx.json();
+        if (parsed?.error) message = parsed.error as string;
+      } catch { /* body no JSON */ }
+    }
+    return { ok: false, message };
+  }
+  if (!data?.ok) return { ok: false, message: data?.error ?? 'Error al cambiar estado' };
   return { ok: true };
 }
 
@@ -258,7 +273,8 @@ async function fetchActiveAssignments(scope?: CampusScope): Promise<AssignmentIn
       teacher:users!teacher_groups_teacher_id_fkey(full_name),
       coordinator:users!teacher_groups_coordinator_id_fkey(full_name)
     `);
-  if (error || !data) return [];
+  if (error) { reportServiceError('dean.service.fetchActiveAssignments', error); return []; }
+  if (!data) return [];
   return (data as any[])
     .filter((r) => (!r.start_date || r.start_date <= today) && (!r.end_date || r.end_date >= today))
     .filter((r) => !scope?.campusIds || scope.campusIds.has(r.campus_id))
@@ -342,7 +358,8 @@ export async function fetchSharedDeviceAlerts(): Promise<SharedDeviceAlert[]> {
     .order('event_at', { ascending: false })
     .limit(20);
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('dean.service.fetchSharedDeviceAlerts', error); return []; }
+  if (!data) return [];
 
   return (data as SharedDeviceAlertRow[]).map((row) => ({
     id: String(row.id),

@@ -4,6 +4,7 @@
 
 import { supabase } from '@/shared/backend/supabaseClient';
 import { getActiveStudentsSnapshot } from '@/shared/backend/checkHealthBackend';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 export const CURRENT_PERIOD = '2026-1';
 
@@ -36,7 +37,8 @@ async function getGroupStudentIds(period = CURRENT_PERIOD): Promise<string[]> {
     .eq('teacher_id', auth.user.id)
     .eq('period', period);
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('teacher.service.getGroupStudentIds', error); return []; }
+  if (!data) return [];
   return data.map((r) => r.student_id as string);
 }
 
@@ -52,7 +54,8 @@ export async function fetchTeacherRoster(period = CURRENT_PERIOD): Promise<Teach
     .eq('period', period)
     .eq('teacher_id', auth.user.id);
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('teacher.service.fetchTeacherRoster', error); return []; }
+  if (!data) return [];
 
   return (data as any[]).map((row) => ({
     assignmentId: row.id,

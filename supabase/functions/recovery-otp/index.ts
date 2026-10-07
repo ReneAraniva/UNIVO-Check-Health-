@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getCorsHeaders } from '../_shared/cors.ts';
 import { withSentry } from '../_shared/sentry.ts';
 import { sendMail, wrapHtml, type MailResult } from '../_shared/mailer.ts';
+import { getClientIp } from '../_shared/clientIp.ts';
 
 const OTP_TTL_MINUTES = 10;
 const MAX_ATTEMPTS = 3;
@@ -88,12 +89,25 @@ Deno.serve(withSentry('recovery-otp', async (req: Request) => {
   if (body.action === 'request') {
     // Q-01 — Rate-limit por IP: frena el spray de correos / fuerza bruta de la
     // respuesta de seguridad desde una misma red (complementa el límite per-email).
-    const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown';
-    const { data: ipOk } = await admin.rpc('rate_limit_hit', {
+    // getClientIp no usa el primer valor de x-forwarded-for, que el cliente puede
+    // inventar en cada request para saltarse el límite.
+    const ip = getClientIp(req) ?? 'unknown';
+    const { data: ipOk, error: ipErr } = await admin.rpc('rate_limit_hit', {
       p_bucket: 'otp_request', p_key: ip, p_max: 10, p_window_seconds: 600,
     });
+    if (ipErr) return json({ error: 'Servicio no disponible. Intenta más tarde.' }, 503);
     if (ipOk === false) {
       return json({ error: 'Demasiadas solicitudes desde esta red. Intenta de nuevo más tarde.' }, 429);
+    }
+
+    // Límite por cuenta: frena la fuerza bruta de la respuesta de seguridad aunque
+    // el atacante rote de IP (5 intentos cada 15 min por correo).
+    const { data: emailOk, error: emailErr } = await admin.rpc('rate_limit_hit', {
+      p_bucket: 'otp_answer', p_key: email, p_max: 5, p_window_seconds: 900,
+    });
+    if (emailErr) return json({ error: 'Servicio no disponible. Intenta más tarde.' }, 503);
+    if (emailOk === false) {
+      return json({ error: 'Demasiados intentos para esta cuenta. Intenta de nuevo en 15 minutos.' }, 429);
     }
 
     const answer = (body.answer ?? '').trim();
@@ -156,7 +170,8 @@ Deno.serve(withSentry('recovery-otp', async (req: Request) => {
     if (!mail.ok) {
       await admin.from('recovery_otps').update({ consumed_at: new Date().toISOString() }).eq('id', inserted.id);
       const status = mail.error === 'missing_gmail_credentials' ? 500 : 502;
-      return json({ error: 'No se pudo enviar el código. Intenta más tarde.', detail: mail.error }, status);
+      console.error('[recovery-otp] fallo de envío:', mail.error);
+      return json({ error: 'No se pudo enviar el código. Intenta más tarde.' }, status);
     }
     const masked = user.backup_email && user.backup_email.toLowerCase() !== email
       ? 'Código enviado a tu correo institucional y de respaldo.'
@@ -216,6 +231,8 @@ Deno.serve(withSentry('recovery-otp', async (req: Request) => {
 
   return json({ error: 'Accion no soportada.' }, 400);
   } catch (e) {
-    return json({ error: 'Error interno en recovery-otp', detail: e instanceof Error ? e.message : String(e) }, 500);
+    // El detalle queda en los logs de la función (y Sentry); no se expone al cliente.
+    console.error('[recovery-otp]', e);
+    return json({ error: 'Error interno. Intenta más tarde.' }, 500);
   }
 }));

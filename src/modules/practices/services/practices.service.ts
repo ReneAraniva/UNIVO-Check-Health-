@@ -1,12 +1,14 @@
 import { supabase } from '@/shared/backend/supabaseClient';
 import { Practice } from '../types';
+import { reportServiceError } from '@/shared/utils/sentry';
 
 export const getPractices = async (): Promise<Practice[]> => {
   const { data, error } = await supabase
     .from('campuses')
     .select('id, name, location_label, supervisor_name, schedule, start_date, end_date, description');
 
-  if (error || !data) return [];
+  if (error) { reportServiceError('practices.service.getPractices', error); return []; }
+  if (!data) return [];
 
   return data.map((row) => ({
     id: row.id as string,
