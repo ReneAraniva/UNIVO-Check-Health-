@@ -5,6 +5,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as jose from 'https://esm.sh/jose@5';
 import { getCorsHeaders } from '../_shared/cors.ts';
 import { withSentry } from '../_shared/sentry.ts';
+import { getClientIp, isPlausibleIp } from '../_shared/clientIp.ts';
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 const ACCURACY_MAX_METERS = 100;
 
@@ -69,11 +72,23 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
   // Q-01 — Rate-limit por alumno (no por IP: un campus con un solo wifi/NAT
   // bloquearía a todos). 10 intentos/min absorbe reintentos legítimos (GPS/horario)
   // y frena fuerza bruta o scripts de abuso.
-  const { data: rlOk } = await admin.rpc('rate_limit_hit', {
+  const { data: rlOk, error: rlError } = await admin.rpc('rate_limit_hit', {
     p_bucket: 'checkin', p_key: user.id, p_max: 10, p_window_seconds: 60,
   });
+  // Falla cerrado: si el limitador no responde, no se registra nada.
+  if (rlError) return fail('No se pudo validar tu solicitud. Intenta de nuevo en un momento.', 503);
   if (rlOk === false) {
     return fail('Demasiados intentos de registro. Espera un minuto e inténtalo de nuevo.', 429);
+  }
+
+  // Solo alumnos activos marcan con QR (auditoría 2026-10-06, C-3).
+  const { data: profile } = await admin
+    .from('users')
+    .select('role, is_active')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (!profile || (profile.role ?? '').toUpperCase() !== 'STUDENT' || profile.is_active === false) {
+    return fail('Solo los estudiantes activos pueden registrar asistencia con QR.', 403);
   }
 
   const body = await req.json().catch(() => ({})) as RequestBody;
@@ -83,7 +98,11 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
   if (!qr_token && (!short_code || !bodyCampusId)) {
     return fail('Proporciona qr_token o (short_code + campus_id).');
   }
-  if (accuracy != null && accuracy > ACCURACY_MAX_METERS) {
+  // La precisión es obligatoria: si el cliente la omitía, el control de ≤100 m no se aplicaba.
+  if (accuracy == null || !Number.isFinite(accuracy)) {
+    return fail('No se pudo leer la precision del GPS. Activa la ubicacion de alta precision e intentalo de nuevo.');
+  }
+  if (accuracy > ACCURACY_MAX_METERS) {
     return fail(`Senal GPS imprecisa (+/-${Math.round(accuracy)} m). Sal al exterior o activa ubicacion de alta precision e intentalo de nuevo.`);
   }
 
@@ -112,6 +131,16 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
       campusId = (payload as { campus_id: string }).campus_id;
     } catch {
       return fail('QR invalido. Pidele al encargado que regenere el QR de la sede.');
+    }
+    // M-7: el QR vigente es el guardado en campus_qr. Al regenerarlo, los impresos
+    // (o fotografiados) anteriores dejan de servir aunque su firma siga siendo válida.
+    const { data: current } = await admin
+      .from('campus_qr')
+      .select('token')
+      .eq('campus_id', campusId)
+      .maybeSingle();
+    if (!current?.token || current.token !== qr_token) {
+      return fail('Este QR ya no esta vigente. Pidele al encargado el QR actual de la sede.');
     }
   }
 
@@ -173,6 +202,18 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
     ? `Posible GPS falso detectado (${Math.round(confidence * 100)}%): ${reasons.join(' ')}`
     : undefined;
 
+  // Señal del servidor (no depende de lo que declare el cliente): velocidad
+  // imposible entre la marca anterior y esta. Antes solo la calculaba el cliente.
+  const { data: coherence } = await admin.rpc('validate_location_coherence', {
+    p_student_id: user.id,
+    p_current_lat: lat,
+    p_current_lng: lng,
+  });
+  const speedReason = coherence?.[0]?.is_suspicious
+    ? 'Desplazamiento inusual detectado entre registros consecutivos.'
+    : undefined;
+  const suspiciousReason = [fakeGpsReason, speedReason].filter(Boolean).join(' ') || null;
+
   if (isFakeGps) {
     await admin.from('audit_log').insert({
       action: 'FAKE_GPS_DETECTED',
@@ -181,7 +222,7 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
     });
   }
 
-  const { ip: clientIp, info: ipInfo } = await resolveClientIp(req);
+  const clientIp = getClientIp(req);
   const { data: attendance, error: insertError } = await admin
     .from('attendances')
     .insert({
@@ -191,20 +232,34 @@ Deno.serve(withSentry('validate-qr-checkin', async (req: Request) => {
       subject_id: assignment.subjectId,
       check_in_location: { latitude: lat, longitude: lng, accuracyMeters: accuracy ?? null },
       check_in_ip: clientIp,
-      check_in_ip_info: ipInfo,
       device_fingerprint: device_fingerprint ?? null,
       device_info: device_info ?? null,
-      review_status: fakeGpsReason ? 'OBSERVADO' : 'PENDIENTE',
-      suspicious_reason: fakeGpsReason ?? null,
+      review_status: suspiciousReason ? 'OBSERVADO' : 'PENDIENTE',
+      suspicious_reason: suspiciousReason,
       status: 'present',
     })
     .select('id')
     .single();
 
+  if (insertError?.code === '23505') {
+    // uq_attendances_one_open_per_student: doble toque o reintento simultáneo.
+    return fail('Ya tienes una entrada activa.');
+  }
   if (insertError || !attendance) {
     return fail(DEBUG
       ? `Error al registrar la asistencia: ${insertError?.message ?? 'desconocido'}`
       : 'No se pudo registrar la asistencia. Intenta de nuevo.');
+  }
+
+  // La geolocalización de la IP (ip.guide, hasta 2,5 s) ya no retrasa la respuesta:
+  // se completa en segundo plano.
+  const attendanceId = (attendance as Record<string, unknown>).id as string;
+  if (clientIp && isPlausibleIp(clientIp)) {
+    const enrich = lookupIpInfo(clientIp).then((info) =>
+      info ? admin.from('attendances').update({ check_in_ip_info: info }).eq('id', attendanceId) : null
+    );
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(enrich);
+    else await enrich;
   }
 
   return json({
@@ -229,8 +284,10 @@ async function resolveAssignment(params: {
     .eq('student_id', params.userId)
     .eq('campus_id', params.campusId);
 
+  // C-3: sin asignación en esta sede no hay entrada. Antes devolvía ok y el alumno
+  // marcaba sin validar horario ni fechas.
   if (!assigns || assigns.length === 0) {
-    return { ok: true, assignmentId: null, subjectId: null };
+    return { ok: false, body: { ok: false, message: 'No tienes una asignacion en esta sede.' } };
   }
 
   const today = todayDateSV();
@@ -317,15 +374,12 @@ function todayDateSV(): string {
   return `${sv.getFullYear()}-${String(sv.getMonth() + 1).padStart(2, '0')}-${String(sv.getDate()).padStart(2, '0')}`;
 }
 
-async function resolveClientIp(req: Request): Promise<{ ip: string | null; info: unknown }> {
-  const fwd = req.headers.get('x-forwarded-for') ?? '';
-  const ip = fwd.split(',')[0].trim() || null;
-  if (!ip) return { ip: null, info: null };
+async function lookupIpInfo(ip: string): Promise<unknown> {
   try {
-    const res = await fetch(`https://ip.guide/${ip}`, { signal: AbortSignal.timeout(2500) });
-    if (res.ok) return { ip, info: await res.json() };
+    const res = await fetch(`https://ip.guide/${encodeURIComponent(ip)}`, { signal: AbortSignal.timeout(2500) });
+    if (res.ok) return await res.json();
   } catch {
     // Best effort.
   }
-  return { ip, info: null };
+  return null;
 }
